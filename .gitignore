@@ -9,6 +9,8 @@ Desktop.ini
 *.swp
 *.swo
 *~
+.claude
+.codex
 
 # Logs
 *.log
@@ -22,6 +24,11 @@ pnpm-debug.log*
 .env
 .env.*
 !.env.sample
+!.env.example
+
+# Telegram / проект
+data/sessions/*.session
+data/*.db
 
 # Dependencies
 node_modules/
@@ -42,6 +49,7 @@ temp/
 # Python
 __pycache__/
 *.py[cod]
+*.egg-info/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

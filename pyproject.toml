@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tg-userbot"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "telethon>=1.36",
+    "google-generativeai>=0.8",
+    "apscheduler>=3.10",
+    "aiosqlite>=0.20",
+    "pydantic-settings>=2.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ai*", "userbot*", "core*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
