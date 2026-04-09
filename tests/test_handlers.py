@@ -11,6 +11,16 @@ from ai.gemini import GeminiTemporaryError
 from userbot.handlers import WhitelistFilter, handle_new_message
 
 
+@pytest.fixture(autouse=True)
+def inline_to_thread(monkeypatch):
+    """Убирает реальные thread-вызовы из unit-тестов обработчика."""
+
+    async def fake_to_thread(func, /, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr("userbot.handlers.asyncio.to_thread", fake_to_thread)
+
+
 async def test_whitelist_allows_listed_user():
     """Проверяет, что user_id из whitelist пропускается фильтром."""
     with tempfile.NamedTemporaryFile(

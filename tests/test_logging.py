@@ -13,6 +13,16 @@ from userbot.handlers import WhitelistFilter, handle_new_message
 from userbot.scheduler import ConversationSession, TopicSelector
 
 
+@pytest.fixture(autouse=True)
+def inline_gemini_to_thread(monkeypatch):
+    """Убирает реальные thread-вызовы из unit-тестов логирования Gemini."""
+
+    async def fake_to_thread(func, /, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr("ai.gemini.asyncio.to_thread", fake_to_thread)
+
+
 def test_setup_logging_sets_root_level():
     """Проверяет, что инициализация задаёт ожидаемый уровень root logger."""
     from core.logging import setup_logging
