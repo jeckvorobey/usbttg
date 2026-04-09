@@ -137,3 +137,31 @@ async def test_handle_new_message_skips_non_whitelisted_user():
 
     gemini_client.generate_reply.assert_not_awaited()
     event.respond.assert_not_awaited()
+
+
+async def test_handle_new_message_sends_fallback_on_gemini_error():
+    """Проверяет, что при ошибке Gemini обработчик отправляет безопасный fallback."""
+    whitelist = WhitelistFilter(whitelist_path="unused")
+    whitelist.user_ids = {123}
+
+    history = SimpleNamespace(
+        get_history=AsyncMock(return_value=[{"role": "user", "text": "Предыдущее"}]),
+        save_message=AsyncMock(),
+    )
+    prompt_loader = SimpleNamespace(
+        load=AsyncMock(side_effect=["Системный промт", "Промт ответа"])
+    )
+    gemini_client = SimpleNamespace(generate_reply=AsyncMock(side_effect=RuntimeError("503 UNAVAILABLE")))
+    event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
+
+    await handle_new_message(
+        event=event,
+        whitelist=whitelist,
+        history=history,
+        prompt_loader=prompt_loader,
+        gemini_client=gemini_client,
+    )
+
+    gemini_client.generate_reply.assert_awaited_once()
+    event.respond.assert_awaited_once_with("Сейчас не могу ответить из-за временной ошибки сервиса. Попробуй ещё раз позже.")
+    history.save_message.assert_not_awaited()
