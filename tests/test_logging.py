@@ -68,6 +68,9 @@ async def test_run_main_logs_startup_and_shutdown(monkeypatch, caplog):
         prompts_dir="ai/prompts",
         proxy_url=None,
         log_level="INFO",
+        group_chat_id=-100555000111,
+        scheduler_enabled=True,
+        silence_timeout_minutes=30,
     )
 
     history = SimpleNamespace(init_db=AsyncMock())
@@ -82,7 +85,7 @@ async def test_run_main_logs_startup_and_shutdown(monkeypatch, caplog):
         stop=AsyncMock(),
         client=fake_telegram_client,
     )
-    scheduler = SimpleNamespace(start=lambda: None, shutdown=AsyncMock())
+    scheduler = SimpleNamespace(add_job=lambda *args, **kwargs: None, start=lambda: None, shutdown=AsyncMock())
 
     monkeypatch.setattr(run, "get_settings", lambda: settings)
     monkeypatch.setattr(run, "MessageHistory", lambda db_path: history)
@@ -91,9 +94,11 @@ async def test_run_main_logs_startup_and_shutdown(monkeypatch, caplog):
     monkeypatch.setattr(
         run,
         "GeminiClient",
-        lambda api_key, proxy_url=None: SimpleNamespace(
+        lambda api_key, model_name=None, proxy_url=None: SimpleNamespace(
             api_key=api_key,
+            model_name=model_name,
             proxy_url=proxy_url,
+            start_topic=AsyncMock(return_value="Сообщение по теме"),
         ),
     )
     monkeypatch.setattr(run, "TopicSelector", lambda topics_path: topic_selector)
@@ -125,7 +130,7 @@ async def test_handle_new_message_logs_successful_processing(caplog):
         load=AsyncMock(side_effect=["Системный промт", "Промт ответа"])
     )
     gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ бота"))
-    event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
+    event = SimpleNamespace(sender_id=123, chat_id=-100555000111, raw_text="Привет", respond=AsyncMock())
 
     with caplog.at_level(logging.INFO):
         await handle_new_message(
@@ -137,8 +142,8 @@ async def test_handle_new_message_logs_successful_processing(caplog):
         )
 
     messages = [record.getMessage() for record in caplog.records]
-    assert any("Обработка входящего сообщения от user_id=123" in message for message in messages)
-    assert any("Ответ пользователю user_id=123 отправлен" in message for message in messages)
+    assert any("Обработка входящего сообщения от user_id=123 в chat_id=-100555000111" in message for message in messages)
+    assert any("Ответ пользователю user_id=123 в chat_id=-100555000111 отправлен" in message for message in messages)
 
 
 @pytest.mark.asyncio
@@ -146,7 +151,7 @@ async def test_handle_new_message_logs_whitelist_skip(caplog):
     """Проверяет логирование пропуска сообщения для пользователя вне whitelist."""
     whitelist = WhitelistFilter(whitelist_path="unused")
     whitelist.user_ids = {123}
-    event = SimpleNamespace(sender_id=999, raw_text="Привет", respond=AsyncMock())
+    event = SimpleNamespace(sender_id=999, chat_id=-100555000111, raw_text="Привет", respond=AsyncMock())
 
     with caplog.at_level(logging.INFO):
         await handle_new_message(
@@ -158,12 +163,12 @@ async def test_handle_new_message_logs_whitelist_skip(caplog):
         )
 
     messages = [record.getMessage() for record in caplog.records]
-    assert any("не входит в whitelist" in message for message in messages)
+    assert any("chat_id=-100555000111" in message and "не входит в whitelist" in message for message in messages)
 
 
 @pytest.mark.asyncio
-async def test_handle_new_message_logs_gemini_error_and_fallback(caplog):
-    """Проверяет логирование ошибки Gemini и отправку fallback-ответа."""
+async def test_handle_new_message_logs_gemini_error_silently(caplog):
+    """Проверяет логирование ошибки Gemini без ответа пользователю."""
     whitelist = WhitelistFilter(whitelist_path="unused")
     whitelist.user_ids = {123}
 
@@ -188,7 +193,7 @@ async def test_handle_new_message_logs_gemini_error_and_fallback(caplog):
 
     messages = [record.getMessage() for record in caplog.records]
     assert any("Ошибка генерации ответа для user_id=123" in message for message in messages)
-    event.respond.assert_awaited_once()
+    event.respond.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -224,7 +229,7 @@ async def test_handle_new_message_logs_temporary_gemini_unavailability(caplog):
     assert temporary_records
     assert all(record.levelno == logging.WARNING for record in temporary_records)
     assert all(record.exc_info is None for record in temporary_records)
-    event.respond.assert_awaited_once()
+    event.respond.assert_not_awaited()
 
 
 @pytest.mark.asyncio

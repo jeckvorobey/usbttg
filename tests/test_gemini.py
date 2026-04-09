@@ -90,13 +90,14 @@ def test_gemini_client_builds_client_with_proxy(monkeypatch):
 
     sdk_client = client._get_client()
 
+    import httpx
+
     assert isinstance(sdk_client, FakeClient)
-    assert captured["http_options_kwargs"] == {
-        "client_args": {"proxy": "http://user:pass@127.0.0.1:8080"},
-        "async_client_args": {"proxy": "http://user:pass@127.0.0.1:8080"},
-    }
     assert captured["client_kwargs"]["api_key"] == "test_key_123"
     assert "http_options" in captured["client_kwargs"]
+    kwargs = captured["http_options_kwargs"]
+    assert isinstance(kwargs.get("httpxClient"), httpx.Client)
+    assert isinstance(kwargs.get("httpxAsyncClient"), httpx.AsyncClient)
 
 
 @pytest.mark.asyncio

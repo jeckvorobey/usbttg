@@ -142,14 +142,15 @@ async def test_main_initializes_components(monkeypatch):
     monkeypatch.setattr(
         run,
         "GeminiClient",
-        lambda api_key, proxy_url=None: SimpleNamespace(
+        lambda api_key, model_name=None, proxy_url=None: SimpleNamespace(
             api_key=api_key,
+            model_name=model_name,
             proxy_url=proxy_url,
         ),
     )
     monkeypatch.setattr(run, "TopicSelector", lambda topics_path: topic_selector)
     monkeypatch.setattr(run, "ConversationSession", lambda: object())
-    monkeypatch.setattr(run, "AsyncIOScheduler", lambda: SimpleNamespace(start=lambda: None))
+    monkeypatch.setattr(run, "AsyncIOScheduler", lambda: SimpleNamespace(add_job=lambda *a, **kw: None, start=lambda: None))
     monkeypatch.setattr(run, "UserBotClient", lambda **kwargs: fake_userbot_client)
     monkeypatch.setattr(run, "_register_handlers", AsyncMock())
 

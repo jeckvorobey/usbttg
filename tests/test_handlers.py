@@ -150,8 +150,8 @@ async def test_handle_new_message_skips_non_whitelisted_user():
     event.respond.assert_not_awaited()
 
 
-async def test_handle_new_message_sends_fallback_on_gemini_error():
-    """Проверяет, что при ошибке Gemini обработчик отправляет безопасный fallback."""
+async def test_handle_new_message_silent_on_gemini_error():
+    """Проверяет, что при ошибке Gemini бот ничего не отправляет в Telegram."""
     whitelist = WhitelistFilter(whitelist_path="unused")
     whitelist.user_ids = {123}
 
@@ -174,12 +174,12 @@ async def test_handle_new_message_sends_fallback_on_gemini_error():
     )
 
     gemini_client.generate_reply.assert_awaited_once()
-    event.respond.assert_awaited_once_with("Сейчас не могу ответить из-за временной ошибки сервиса. Попробуй ещё раз позже.")
+    event.respond.assert_not_awaited()
     history.save_message.assert_not_awaited()
 
 
-async def test_handle_new_message_sends_fallback_on_temporary_gemini_error():
-    """Проверяет, что временная ошибка Gemini тоже ведёт к безопасному fallback."""
+async def test_handle_new_message_silent_on_temporary_gemini_error():
+    """Проверяет, что временная ошибка Gemini тоже не вызывает ответа в Telegram."""
     whitelist = WhitelistFilter(whitelist_path="unused")
     whitelist.user_ids = {123}
 
@@ -201,7 +201,37 @@ async def test_handle_new_message_sends_fallback_on_temporary_gemini_error():
         gemini_client=gemini_client,
     )
 
-    event.respond.assert_awaited_once_with(
-        "Сейчас не могу ответить из-за временной ошибки сервиса. Попробуй ещё раз позже."
-    )
+    event.respond.assert_not_awaited()
     history.save_message.assert_not_awaited()
+
+
+async def test_handle_new_message_accepts_chat_id_from_event():
+    """Проверяет, что наличие chat_id не мешает штатной обработке сообщения."""
+    whitelist = WhitelistFilter(whitelist_path="unused")
+    whitelist.user_ids = {123}
+
+    history = SimpleNamespace(
+        get_history=AsyncMock(return_value=[]),
+        save_message=AsyncMock(),
+    )
+    prompt_loader = SimpleNamespace(
+        load=AsyncMock(side_effect=["Системный промт", "Промт ответа"])
+    )
+    gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ бота"))
+    event = SimpleNamespace(
+        sender_id=123,
+        chat_id=-1009876543210,
+        raw_text="Привет",
+        respond=AsyncMock(),
+    )
+
+    await handle_new_message(
+        event=event,
+        whitelist=whitelist,
+        history=history,
+        prompt_loader=prompt_loader,
+        gemini_client=gemini_client,
+    )
+
+    gemini_client.generate_reply.assert_awaited_once()
+    event.respond.assert_awaited_once_with("Ответ бота")
