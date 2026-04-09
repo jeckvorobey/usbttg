@@ -61,6 +61,38 @@ class TopicSelector:
         return topic
 
 
+class SilenceWatcher:
+    """Отслеживает время последней активности в группе для обнаружения тишины."""
+
+    def __init__(self) -> None:
+        """Инициализирует трекер тишины без начальной активности."""
+        self._last_activity: datetime | None = None
+
+    def update_last_activity(self) -> None:
+        """Фиксирует текущий момент как время последней активности в группе."""
+        self._last_activity = datetime.now()
+        logger.debug("Активность в группе обновлена: %s", self._last_activity)
+
+    def is_silence_exceeded(self, timeout_minutes: int) -> bool:
+        """
+        Проверяет, превышено ли время тишины.
+
+        Args:
+            timeout_minutes: Порог тишины в минутах.
+
+        Returns:
+            True если в группе нет активности дольше timeout_minutes минут
+            или активности ещё не было вообще.
+        """
+        if self._last_activity is None:
+            logger.debug("Тишина: активности не было ни разу")
+            return True
+        elapsed_minutes = (datetime.now() - self._last_activity).total_seconds() / 60
+        exceeded = elapsed_minutes >= timeout_minutes
+        logger.debug("Тишина: прошло %.1f мин из %s мин порога", elapsed_minutes, timeout_minutes)
+        return exceeded
+
+
 class ConversationSession:
     """Управляет сессией разговора на одну тему с ограниченной длительностью."""
 

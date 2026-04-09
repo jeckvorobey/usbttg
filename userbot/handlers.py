@@ -8,12 +8,10 @@ from typing import Any
 
 from ai.gemini import GeminiClient, GeminiGenerationError, GeminiTemporaryError, PromptLoader
 from ai.history import MessageHistory
+from userbot.scheduler import SilenceWatcher
 
 
 logger = logging.getLogger(__name__)
-GENERATION_ERROR_REPLY = (
-    "Сейчас не могу ответить из-за временной ошибки сервиса. Попробуй ещё раз позже."
-)
 
 
 class WhitelistFilter:
@@ -70,6 +68,7 @@ async def handle_new_message(
     history: MessageHistory | None = None,
     prompt_loader: PromptLoader | None = None,
     gemini_client: GeminiClient | None = None,
+    silence_watcher: SilenceWatcher | None = None,
 ) -> None:
     """
     Обработчик входящего сообщения в группе.
@@ -85,6 +84,12 @@ async def handle_new_message(
         logger.warning("Сообщение пропущено: sender_id отсутствует")
         return
 
+    # Фиксируем активность для любого сообщения — до проверки whitelist
+    telethon_client = getattr(event, "client", None)
+    _sw = silence_watcher or getattr(telethon_client, "silence_watcher", None)
+    if _sw is not None:
+        _sw.update_last_activity()
+
     if not await whitelist.is_allowed(sender_id):
         logger.info("Сообщение от user_id=%s пропущено: пользователь не входит в whitelist", sender_id)
         return
@@ -95,7 +100,6 @@ async def handle_new_message(
         logger.info("Сообщение от user_id=%s пропущено: текст не найден", sender_id)
         return
 
-    telethon_client = getattr(event, "client", None)
     history = history or getattr(telethon_client, "message_history", None)
     prompt_loader = prompt_loader or getattr(telethon_client, "prompt_loader", None)
     gemini_client = gemini_client or getattr(telethon_client, "gemini_client", None)
@@ -116,18 +120,12 @@ async def handle_new_message(
         )
     except GeminiTemporaryError as exc:
         logger.warning("Gemini временно недоступен для user_id=%s: %s", sender_id, exc)
-        await _send_response(event, GENERATION_ERROR_REPLY)
-        logger.info("Пользователю user_id=%s отправлен fallback-ответ после ошибки генерации", sender_id)
         return
     except GeminiGenerationError as exc:
         logger.error("Ошибка генерации ответа для user_id=%s: %s", sender_id, exc)
-        await _send_response(event, GENERATION_ERROR_REPLY)
-        logger.info("Пользователю user_id=%s отправлен fallback-ответ после ошибки генерации", sender_id)
         return
     except Exception:
         logger.exception("Ошибка генерации ответа для user_id=%s", sender_id)
-        await _send_response(event, GENERATION_ERROR_REPLY)
-        logger.info("Пользователю user_id=%s отправлен fallback-ответ после ошибки генерации", sender_id)
         return
     logger.info("Ответ для user_id=%s сгенерирован", sender_id)
 

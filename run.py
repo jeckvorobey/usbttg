@@ -13,7 +13,7 @@ from core.config import get_settings
 from core.logging import setup_logging
 from userbot.client import UserBotClient
 from userbot.handlers import WhitelistFilter, handle_new_message
-from userbot.scheduler import ConversationSession, TopicSelector
+from userbot.scheduler import ConversationSession, SilenceWatcher, TopicSelector
 
 
 logger = logging.getLogger(__name__)
@@ -72,6 +72,7 @@ async def main() -> None:
     logger.info("Загрузка списка тем из %s", settings.topics_path)
     await topic_selector.load()
     conversation_session = ConversationSession()
+    silence_watcher = SilenceWatcher()
 
     userbot_client = UserBotClient(
         session_name=_build_session_path(settings.session_name),
@@ -90,8 +91,44 @@ async def main() -> None:
         telegram_client.gemini_client = gemini_client
         telegram_client.topic_selector = topic_selector
         telegram_client.conversation_session = conversation_session
+        telegram_client.silence_watcher = silence_watcher
 
     scheduler = AsyncIOScheduler()
+
+    if settings.scheduler_enabled:
+        async def _silence_check_job() -> None:
+            """Проверяет тишину в группе и инициирует разговор если порог превышен."""
+            if conversation_session.is_active():
+                return
+            if not silence_watcher.is_silence_exceeded(settings.silence_timeout_minutes):
+                return
+            if settings.group_chat_id is None:
+                logger.warning("Невозможно начать разговор: GROUP_CHAT_ID не задан в настройках")
+                return
+            if telegram_client is None:
+                return
+            try:
+                topic = await topic_selector.pick_random()
+                system_prompt = await prompt_loader.load("system")
+                start_topic_prompt = await prompt_loader.load("start_topic")
+                message = await gemini_client.start_topic(
+                    system_prompt=f"{system_prompt}\n\n{start_topic_prompt}",
+                    topic=topic,
+                )
+                await telegram_client.send_message(settings.group_chat_id, message)
+                conversation_session.start(topic)
+                silence_watcher.update_last_activity()
+                logger.info("Разговор на тему '%s' инициирован после тишины", topic)
+            except Exception:
+                logger.exception("Ошибка при инициации разговора по расписанию")
+
+        scheduler.add_job(_silence_check_job, "interval", minutes=1)
+        logger.info(
+            "Планировщик тишины активен: таймаут=%s мин", settings.silence_timeout_minutes
+        )
+    else:
+        logger.info("Режим расписания отключён (SCHEDULER_ENABLED=false)")
+
     scheduler.start()
     logger.info("Планировщик запущен")
 

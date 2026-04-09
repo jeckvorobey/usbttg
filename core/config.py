@@ -1,8 +1,20 @@
 """Настройки приложения, загружаемые из .env файла через pydantic-settings."""
 
 from functools import lru_cache
+from typing import Annotated
 
+from pydantic import BeforeValidator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _empty_str_to_none(v: object) -> object:
+    """Преобразует пустую строку в None — для необязательных числовых полей."""
+    if isinstance(v, str) and v.strip() == "":
+        return None
+    return v
+
+
+OptionalInt = Annotated[int | None, BeforeValidator(_empty_str_to_none)]
 
 
 class Settings(BaseSettings):
@@ -35,6 +47,11 @@ class Settings(BaseSettings):
     whitelist_path: str = "data/whitelist.md"
     topics_path: str = "data/topics.md"
     prompts_dir: str = "ai/prompts"
+
+    # Планировщик разговоров
+    scheduler_enabled: bool = True
+    silence_timeout_minutes: int = 60
+    group_chat_id: OptionalInt = None
 
 
 @lru_cache(maxsize=1)
