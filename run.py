@@ -65,6 +65,7 @@ async def main() -> None:
     logger.info("Инициализация Gemini клиента")
     gemini_client = GeminiClient(
         settings.gemini_api_key,
+        model_name=settings.gemini_model,
         proxy_url=settings.proxy_url,
     )
 

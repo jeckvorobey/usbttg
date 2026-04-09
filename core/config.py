@@ -32,6 +32,7 @@ class Settings(BaseSettings):
 
     # Gemini API (получить на https://aistudio.google.com)
     gemini_api_key: str
+    gemini_model: str = "gemini-2.5-flash"
 
     # Telethon сессия (имя файла без .session)
     session_name: str = "84523248603"

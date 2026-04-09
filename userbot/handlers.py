@@ -83,6 +83,7 @@ async def handle_new_message(
     if sender_id is None:
         logger.warning("Сообщение пропущено: sender_id отсутствует")
         return
+    chat_id = _extract_chat_id(event)
 
     # Фиксируем активность для любого сообщения — до проверки whitelist
     telethon_client = getattr(event, "client", None)
@@ -91,27 +92,40 @@ async def handle_new_message(
         _sw.update_last_activity()
 
     if not await whitelist.is_allowed(sender_id):
-        logger.info("Сообщение от user_id=%s пропущено: пользователь не входит в whitelist", sender_id)
+        logger.info(
+            "Сообщение от user_id=%s в chat_id=%s пропущено: пользователь не входит в whitelist",
+            sender_id,
+            chat_id,
+        )
         return
 
-    logger.info("Обработка входящего сообщения от user_id=%s", sender_id)
+    logger.info("Обработка входящего сообщения от user_id=%s в chat_id=%s", sender_id, chat_id)
     user_message = _extract_message_text(event)
     if not user_message:
-        logger.info("Сообщение от user_id=%s пропущено: текст не найден", sender_id)
+        logger.info("Сообщение от user_id=%s в chat_id=%s пропущено: текст не найден", sender_id, chat_id)
         return
 
     history = history or getattr(telethon_client, "message_history", None)
     prompt_loader = prompt_loader or getattr(telethon_client, "prompt_loader", None)
     gemini_client = gemini_client or getattr(telethon_client, "gemini_client", None)
     if history is None or prompt_loader is None or gemini_client is None:
-        logger.warning("Сообщение от user_id=%s не обработано: отсутствуют runtime-зависимости", sender_id)
+        logger.warning(
+            "Сообщение от user_id=%s в chat_id=%s не обработано: отсутствуют runtime-зависимости",
+            sender_id,
+            chat_id,
+        )
         return
 
     history_items = await history.get_history(sender_id)
-    logger.info("История для user_id=%s загружена: %s сообщений", sender_id, len(history_items))
+    logger.info(
+        "История для user_id=%s в chat_id=%s загружена: %s сообщений",
+        sender_id,
+        chat_id,
+        len(history_items),
+    )
     system_prompt = await prompt_loader.load("system")
     reply_prompt = await prompt_loader.load("reply")
-    logger.info("Промты для ответа user_id=%s загружены", sender_id)
+    logger.info("Промты для ответа user_id=%s в chat_id=%s загружены", sender_id, chat_id)
     try:
         reply_text = await gemini_client.generate_reply(
             system_prompt=f"{system_prompt}\n\n{reply_prompt}",
@@ -119,21 +133,21 @@ async def handle_new_message(
             user_message=user_message,
         )
     except GeminiTemporaryError as exc:
-        logger.warning("Gemini временно недоступен для user_id=%s: %s", sender_id, exc)
+        logger.warning("Gemini временно недоступен для user_id=%s в chat_id=%s: %s", sender_id, chat_id, exc)
         return
     except GeminiGenerationError as exc:
-        logger.error("Ошибка генерации ответа для user_id=%s: %s", sender_id, exc)
+        logger.error("Ошибка генерации ответа для user_id=%s в chat_id=%s: %s", sender_id, chat_id, exc)
         return
     except Exception:
-        logger.exception("Ошибка генерации ответа для user_id=%s", sender_id)
+        logger.exception("Ошибка генерации ответа для user_id=%s в chat_id=%s", sender_id, chat_id)
         return
-    logger.info("Ответ для user_id=%s сгенерирован", sender_id)
+    logger.info("Ответ для user_id=%s в chat_id=%s сгенерирован", sender_id, chat_id)
 
     await history.save_message(sender_id, "user", user_message)
     await history.save_message(sender_id, "assistant", reply_text)
-    logger.info("История диалога для user_id=%s сохранена", sender_id)
+    logger.info("История диалога для user_id=%s в chat_id=%s сохранена", sender_id, chat_id)
     await _send_response(event, reply_text)
-    logger.info("Ответ пользователю user_id=%s отправлен", sender_id)
+    logger.info("Ответ пользователю user_id=%s в chat_id=%s отправлен", sender_id, chat_id)
 
 
 def _extract_message_text(event: object) -> str:
@@ -151,6 +165,29 @@ def _extract_message_text(event: object) -> str:
         return nested_text.strip()
     logger.debug("Текст сообщения не найден в событии")
     return ""
+
+
+def _extract_chat_id(event: object) -> int | None:
+    """Извлекает chat_id из Telethon-события, если он доступен."""
+    direct_chat_id = getattr(event, "chat_id", None)
+    if isinstance(direct_chat_id, int):
+        return direct_chat_id
+
+    chat = getattr(event, "chat", None)
+    chat_id = getattr(chat, "id", None)
+    if isinstance(chat_id, int):
+        return chat_id
+
+    message = getattr(event, "message", None)
+    peer_id = getattr(message, "peer_id", None)
+    channel_id = getattr(peer_id, "channel_id", None)
+    if isinstance(channel_id, int):
+        return channel_id
+    chat_peer_id = getattr(peer_id, "chat_id", None)
+    if isinstance(chat_peer_id, int):
+        return chat_peer_id
+
+    return None
 
 
 async def _send_response(event: object, text: str) -> None:
