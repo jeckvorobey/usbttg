@@ -3,6 +3,7 @@
 import asyncio
 import inspect
 import logging
+import random
 from pathlib import Path
 from typing import Any
 
@@ -191,14 +192,22 @@ def _extract_chat_id(event: object) -> int | None:
 
 
 async def _send_response(event: object, text: str) -> None:
-    """Отправляет ответ через доступный метод события."""
-    for method_name in ("respond", "reply"):
-        method = getattr(event, method_name, None)
-        if method is None:
-            continue
-        logger.info("Отправка ответа через метод %s", method_name)
+    """Отправляет ответ через доступный метод события с рандомной задержкой.
+
+    Если входящее сообщение само является reply — отвечает с цитатой (reply),
+    иначе отправляет обычное сообщение в чат (respond).
+    """
+    delay = random.uniform(30, 90)
+    logger.info("Задержка перед отправкой ответа: %.1f сек", delay)
+    await asyncio.sleep(delay)
+
+    is_reply = bool(getattr(event, "is_reply", False))
+    method_name = "reply" if is_reply else "respond"
+    method = getattr(event, method_name, None)
+    if method is not None:
+        logger.info("Отправка ответа через метод %s (is_reply=%s)", method_name, is_reply)
         result = method(text)
         if inspect.isawaitable(result):
             await result
         return
-    logger.warning("Ответ не отправлен: у события нет методов respond/reply")
+    logger.warning("Ответ не отправлен: у события нет метода %s", method_name)
