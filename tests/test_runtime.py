@@ -142,10 +142,14 @@ async def test_main_initializes_components(monkeypatch):
     monkeypatch.setattr(
         run,
         "GeminiClient",
-        lambda api_key, model_name=None, proxy_url=None: SimpleNamespace(
+        lambda api_key, model_name=None, proxy_url=None, fallback_model_name=None, max_retries=None, retry_backoff_seconds=None, retry_jitter_seconds=None: SimpleNamespace(
             api_key=api_key,
             model_name=model_name,
             proxy_url=proxy_url,
+            fallback_model_name=fallback_model_name,
+            max_retries=max_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
+            retry_jitter_seconds=retry_jitter_seconds,
         ),
     )
     monkeypatch.setattr(run, "TopicSelector", lambda topics_path: topic_selector)
@@ -161,3 +165,79 @@ async def test_main_initializes_components(monkeypatch):
     topic_selector.load.assert_awaited_once()
     fake_userbot_client.start.assert_awaited_once()
     fake_telegram_client.run_until_disconnected.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_main_passes_gemini_resilience_settings(monkeypatch):
+    """Проверяет проброс retry-параметров и резервной модели в GeminiClient."""
+    import run
+
+    settings = Settings(
+        api_id=1,
+        api_hash="hash",
+        gemini_api_key="gemini-key",
+        gemini_model="gemini-2.5-flash",
+        gemini_fallback_model="gemini-2.5-flash-lite",
+        gemini_max_retries=4,
+        gemini_retry_backoff_seconds=2.0,
+        gemini_retry_jitter_seconds=0.3,
+        session_name="84523248603",
+        db_path=":memory:",
+        whitelist_path="data/whitelist.md",
+        topics_path="data/topics.md",
+        prompts_dir="ai/prompts",
+        proxy_url="http://127.0.0.1:8080",
+    )
+
+    history = SimpleNamespace(init_db=AsyncMock())
+    whitelist = SimpleNamespace(load=AsyncMock())
+    topic_selector = SimpleNamespace(load=AsyncMock())
+    fake_telegram_client = FakeTelegramClient("session", 1, "hash")
+    fake_userbot_client = SimpleNamespace(
+        start=AsyncMock(),
+        stop=AsyncMock(),
+        client=fake_telegram_client,
+    )
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(run, "get_settings", lambda: settings)
+    monkeypatch.setattr(run, "MessageHistory", lambda db_path: history)
+    monkeypatch.setattr(run, "WhitelistFilter", lambda whitelist_path: whitelist)
+    monkeypatch.setattr(run, "PromptLoader", lambda prompts_dir: object())
+
+    def build_gemini_client(
+        api_key,
+        model_name=None,
+        proxy_url=None,
+        fallback_model_name=None,
+        max_retries=None,
+        retry_backoff_seconds=None,
+        retry_jitter_seconds=None,
+    ):
+        captured["api_key"] = api_key
+        captured["model_name"] = model_name
+        captured["proxy_url"] = proxy_url
+        captured["fallback_model_name"] = fallback_model_name
+        captured["max_retries"] = max_retries
+        captured["retry_backoff_seconds"] = retry_backoff_seconds
+        captured["retry_jitter_seconds"] = retry_jitter_seconds
+        return SimpleNamespace()
+
+    monkeypatch.setattr(run, "GeminiClient", build_gemini_client)
+    monkeypatch.setattr(run, "TopicSelector", lambda topics_path: topic_selector)
+    monkeypatch.setattr(run, "ConversationSession", lambda: object())
+    monkeypatch.setattr(run, "AsyncIOScheduler", lambda: SimpleNamespace(add_job=lambda *a, **kw: None, start=lambda: None))
+    monkeypatch.setattr(run, "UserBotClient", lambda **kwargs: fake_userbot_client)
+    monkeypatch.setattr(run, "_register_handlers", AsyncMock())
+
+    await run.main()
+
+    assert captured == {
+        "api_key": "gemini-key",
+        "model_name": "gemini-2.5-flash",
+        "proxy_url": "http://127.0.0.1:8080",
+        "fallback_model_name": "gemini-2.5-flash-lite",
+        "max_retries": 4,
+        "retry_backoff_seconds": 2.0,
+        "retry_jitter_seconds": 0.3,
+    }

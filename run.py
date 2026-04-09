@@ -67,6 +67,10 @@ async def main() -> None:
         settings.gemini_api_key,
         model_name=settings.gemini_model,
         proxy_url=settings.proxy_url,
+        fallback_model_name=settings.gemini_fallback_model,
+        max_retries=settings.gemini_max_retries,
+        retry_backoff_seconds=settings.gemini_retry_backoff_seconds,
+        retry_jitter_seconds=settings.gemini_retry_jitter_seconds,
     )
 
     topic_selector = TopicSelector(settings.topics_path)

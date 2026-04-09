@@ -108,3 +108,23 @@ def test_settings_log_level_defaults_to_info():
         s = Settings(_env_file=None)
 
         assert s.log_level == "INFO"
+
+
+def test_settings_reads_gemini_resilience_options():
+    """Проверяет загрузку резервной модели и retry-параметров Gemini из окружения."""
+    env = {
+        **BASE_ENV,
+        "GEMINI_FALLBACK_MODEL": "gemini-2.5-flash-lite",
+        "GEMINI_MAX_RETRIES": "4",
+        "GEMINI_RETRY_BACKOFF_SECONDS": "2.0",
+        "GEMINI_RETRY_JITTER_SECONDS": "0.4",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        from core.config import Settings
+
+        s = Settings(_env_file=None)
+
+        assert s.gemini_fallback_model == "gemini-2.5-flash-lite"
+        assert s.gemini_max_retries == 4
+        assert s.gemini_retry_backoff_seconds == 2.0
+        assert s.gemini_retry_jitter_seconds == 0.4

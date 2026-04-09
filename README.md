@@ -34,6 +34,13 @@ nano .env
 | `SESSION_NAME`   | Имя файла сессии в `data/sessions/` (без `.session`)  |
 | `PROXY_URL`      | Необязательно. Пример: `http://user:pass@host:port`   |
 
+Дополнительно можно настроить устойчивость Gemini при перегрузке:
+
+- `GEMINI_FALLBACK_MODEL` — резервная модель, на которую бот переключится после неудачных повторов основной.
+- `GEMINI_MAX_RETRIES` — число повторов на одну модель.
+- `GEMINI_RETRY_BACKOFF_SECONDS` — базовая задержка для экспоненциального backoff.
+- `GEMINI_RETRY_JITTER_SECONDS` — случайная добавка к задержке, чтобы не бить в API синхронно.
+
 ### 3. Добавить пользователей в whitelist
 
 ```bash

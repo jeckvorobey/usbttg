@@ -94,7 +94,7 @@ async def test_run_main_logs_startup_and_shutdown(monkeypatch, caplog):
     monkeypatch.setattr(
         run,
         "GeminiClient",
-        lambda api_key, model_name=None, proxy_url=None: SimpleNamespace(
+        lambda api_key, model_name=None, proxy_url=None, fallback_model_name=None, max_retries=None, retry_backoff_seconds=None, retry_jitter_seconds=None: SimpleNamespace(
             api_key=api_key,
             model_name=model_name,
             proxy_url=proxy_url,

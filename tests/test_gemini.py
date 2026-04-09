@@ -65,6 +65,17 @@ def test_gemini_client_default_model():
     assert len(client.model_name) > 0
 
 
+def test_gemini_client_tracks_fallback_model():
+    """Проверяет сохранение имени резервной модели Gemini."""
+    client = GeminiClient(
+        api_key="test_key_123",
+        model_name="gemini-2.5-flash",
+        fallback_model_name="gemini-2.5-flash-lite",
+    )
+
+    assert client.fallback_model_name == "gemini-2.5-flash-lite"
+
+
 def test_gemini_client_builds_client_with_proxy(monkeypatch):
     """Проверяет передачу proxy-настроек в новый Gemini SDK."""
     captured: dict[str, object] = {}
@@ -90,14 +101,12 @@ def test_gemini_client_builds_client_with_proxy(monkeypatch):
 
     sdk_client = client._get_client()
 
-    import httpx
-
     assert isinstance(sdk_client, FakeClient)
     assert captured["client_kwargs"]["api_key"] == "test_key_123"
     assert "http_options" in captured["client_kwargs"]
     kwargs = captured["http_options_kwargs"]
-    assert isinstance(kwargs.get("httpxClient"), httpx.Client)
-    assert isinstance(kwargs.get("httpxAsyncClient"), httpx.AsyncClient)
+    assert kwargs.get("client_args") == {"proxy": "http://user:pass@127.0.0.1:8080"}
+    assert kwargs.get("async_client_args") == {"proxy": "http://user:pass@127.0.0.1:8080"}
 
 
 @pytest.mark.asyncio
@@ -183,6 +192,7 @@ async def test_gemini_client_retries_on_temporary_server_error(monkeypatch):
         model_name="gemini-2.5-flash",
         max_retries=3,
         retry_backoff_seconds=0.5,
+        retry_jitter_seconds=0.0,
     )
 
     result = await client.generate_reply(
@@ -233,6 +243,7 @@ async def test_gemini_client_raises_temporary_error_after_retry_limit(monkeypatc
         model_name="gemini-2.5-flash",
         max_retries=2,
         retry_backoff_seconds=0.5,
+        retry_jitter_seconds=0.0,
     )
 
     with pytest.raises(GeminiTemporaryError):
@@ -243,3 +254,115 @@ async def test_gemini_client_raises_temporary_error_after_retry_limit(monkeypatc
         )
 
     assert delays == [0.5]
+
+
+@pytest.mark.asyncio
+async def test_gemini_client_switches_to_fallback_model_after_retry_limit(monkeypatch):
+    """Проверяет переключение на резервную модель после исчерпания повторов основной."""
+    attempts: list[str] = []
+
+    class FakeServerError(Exception):
+        def __init__(self, status_code: int, message: str) -> None:
+            super().__init__(message)
+            self.status_code = status_code
+
+    class FakeModels:
+        def generate_content(self, **kwargs):
+            model = kwargs["model"]
+            attempts.append(model)
+            if model == "gemini-2.5-flash":
+                raise FakeServerError(503, "503 UNAVAILABLE")
+            return SimpleNamespace(text="Ответ резервной модели")
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            self.models = FakeModels()
+
+    class FakeGenerateContentConfig:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    fake_types = SimpleNamespace(GenerateContentConfig=FakeGenerateContentConfig)
+    fake_genai = SimpleNamespace(Client=FakeClient, types=fake_types)
+
+    delays: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("ai.gemini._import_google_genai", lambda: fake_genai)
+    monkeypatch.setattr("ai.gemini.asyncio.sleep", fake_sleep)
+
+    client = GeminiClient(
+        api_key="test_key_123",
+        model_name="gemini-2.5-flash",
+        fallback_model_name="gemini-2.5-flash-lite",
+        max_retries=2,
+        retry_backoff_seconds=0.5,
+        retry_jitter_seconds=0.0,
+    )
+
+    result = await client.generate_reply(
+        system_prompt="Системная роль",
+        history=[],
+        user_message="Привет",
+    )
+
+    assert result == "Ответ резервной модели"
+    assert attempts == [
+        "gemini-2.5-flash",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+    ]
+    assert delays == [0.5]
+
+
+@pytest.mark.asyncio
+async def test_gemini_client_adds_jitter_to_retry_delay(monkeypatch):
+    """Проверяет добавление jitter к экспоненциальной задержке повтора."""
+
+    class FakeServerError(Exception):
+        def __init__(self, status_code: int, message: str) -> None:
+            super().__init__(message)
+            self.status_code = status_code
+
+    class FakeModels:
+        def generate_content(self, **kwargs):
+            raise FakeServerError(503, "503 UNAVAILABLE")
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            self.models = FakeModels()
+
+    class FakeGenerateContentConfig:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    fake_types = SimpleNamespace(GenerateContentConfig=FakeGenerateContentConfig)
+    fake_genai = SimpleNamespace(Client=FakeClient, types=fake_types)
+
+    delays: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("ai.gemini._import_google_genai", lambda: fake_genai)
+    monkeypatch.setattr("ai.gemini.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("ai.gemini.random.uniform", lambda start, end: 0.25)
+
+    client = GeminiClient(
+        api_key="test_key_123",
+        model_name="gemini-2.5-flash",
+        max_retries=2,
+        retry_backoff_seconds=0.5,
+        retry_jitter_seconds=0.5,
+    )
+
+    with pytest.raises(GeminiTemporaryError):
+        await client.generate_reply(
+            system_prompt="Системная роль",
+            history=[],
+            user_message="Привет",
+        )
+
+    assert delays == [0.75]

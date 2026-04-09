@@ -2,10 +2,10 @@
 
 import asyncio
 import logging
+import random
 from pathlib import Path
 from typing import Any
-
-import httpx
+from urllib.parse import urlparse
 
 
 logger = logging.getLogger(__name__)
@@ -63,8 +63,10 @@ class GeminiClient:
         api_key: str,
         model_name: str = "gemini-2.5-flash",
         proxy_url: str | None = None,
+        fallback_model_name: str | None = None,
         max_retries: int = 3,
         retry_backoff_seconds: float = 1.0,
+        retry_jitter_seconds: float = 0.0,
     ) -> None:
         """
         Инициализирует клиент Gemini.
@@ -73,14 +75,18 @@ class GeminiClient:
             api_key: API ключ для доступа к Gemini.
             model_name: Название модели Gemini для генерации.
             proxy_url: Общий proxy URL для Gemini API.
+            fallback_model_name: Имя резервной модели для временных сбоев основной.
             max_retries: Максимальное число попыток для временных ошибок Gemini API.
             retry_backoff_seconds: Базовая задержка между повторными попытками.
+            retry_jitter_seconds: Максимальная случайная добавка к задержке между попытками.
         """
         self.api_key = api_key
         self.model_name = model_name
         self.proxy_url = proxy_url
+        self.fallback_model_name = fallback_model_name
         self.max_retries = max(1, max_retries)
         self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
+        self.retry_jitter_seconds = max(0.0, retry_jitter_seconds)
         self._client: Any | None = None
         self._types: Any | None = None
 
@@ -132,48 +138,74 @@ class GeminiClient:
         config = types_module.GenerateContentConfig(system_instruction=system_prompt)
         last_error: Exception | None = None
 
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                logger.debug(
-                    "Отправка запроса в Gemini: модель=%s, длина_prompt=%s, попытка=%s/%s",
-                    self.model_name,
-                    len(prompt),
-                    attempt,
-                    self.max_retries,
-                )
-                response = await asyncio.to_thread(
-                    client.models.generate_content,
-                    model=self.model_name,
-                    contents=prompt,
-                    config=config,
-                )
-                text = getattr(response, "text", "")
-                normalized_text = str(text).strip()
-                logger.info("Ответ Gemini успешно получен, длина=%s", len(normalized_text))
-                return normalized_text
-            except Exception as exc:
-                last_error = exc
-                if self._is_temporary_error(exc):
-                    if attempt < self.max_retries:
-                        delay = self.retry_backoff_seconds * attempt
-                        logger.warning(
-                            "Gemini временно недоступен: status=%s, попытка=%s/%s, повтор через %.1f сек",
-                            self._extract_status_code(exc),
-                            attempt,
-                            self.max_retries,
-                            delay,
-                        )
-                        await asyncio.sleep(delay)
-                        continue
+        model_names = self._get_model_names()
 
-                    logger.warning(
-                        "Gemini временно недоступен после %s попыток: status=%s",
+        for model_index, current_model_name in enumerate(model_names):
+            for attempt in range(1, self.max_retries + 1):
+                try:
+                    logger.debug(
+                        "Отправка запроса в Gemini: модель=%s, длина_prompt=%s, попытка=%s/%s, proxy=%s",
+                        current_model_name,
+                        len(prompt),
+                        attempt,
                         self.max_retries,
-                        self._extract_status_code(exc),
+                        self._describe_proxy(),
                     )
-                    raise GeminiTemporaryError("Gemini API временно недоступен") from exc
+                    response = await asyncio.to_thread(
+                        client.models.generate_content,
+                        model=current_model_name,
+                        contents=prompt,
+                        config=config,
+                    )
+                    text = getattr(response, "text", "")
+                    normalized_text = str(text).strip()
+                    logger.info(
+                        "Ответ Gemini успешно получен: модель=%s, длина=%s",
+                        current_model_name,
+                        len(normalized_text),
+                    )
+                    return normalized_text
+                except Exception as exc:
+                    last_error = exc
+                    if self._is_temporary_error(exc):
+                        is_last_attempt_for_model = attempt >= self.max_retries
+                        has_fallback = model_index < len(model_names) - 1
 
-                raise GeminiGenerationError("Ошибка генерации ответа через Gemini") from exc
+                        if not is_last_attempt_for_model:
+                            delay = self._calculate_retry_delay(attempt)
+                            logger.warning(
+                                "Gemini временно недоступен: модель=%s, status=%s, попытка=%s/%s, повтор через %.2f сек, proxy=%s",
+                                current_model_name,
+                                self._extract_status_code(exc),
+                                attempt,
+                                self.max_retries,
+                                delay,
+                                self._describe_proxy(),
+                            )
+                            await asyncio.sleep(delay)
+                            continue
+
+                        if has_fallback:
+                            fallback_model_name = model_names[model_index + 1]
+                            logger.warning(
+                                "Gemini временно недоступен после %s попыток: модель=%s, status=%s. Переключение на резервную модель=%s",
+                                self.max_retries,
+                                current_model_name,
+                                self._extract_status_code(exc),
+                                fallback_model_name,
+                            )
+                            break
+
+                        logger.warning(
+                            "Gemini временно недоступен после %s попыток: модель=%s, status=%s, proxy=%s",
+                            self.max_retries,
+                            current_model_name,
+                            self._extract_status_code(exc),
+                            self._describe_proxy(),
+                        )
+                        raise GeminiTemporaryError("Gemini API временно недоступен") from exc
+
+                    raise GeminiGenerationError("Ошибка генерации ответа через Gemini") from exc
 
         raise GeminiGenerationError("Ошибка генерации ответа через Gemini") from last_error
 
@@ -187,15 +219,38 @@ class GeminiClient:
             client_kwargs: dict[str, Any] = {"api_key": self.api_key}
             if self.proxy_url:
                 http_options = genai.types.HttpOptions(
-                    httpxClient=httpx.Client(proxy=self.proxy_url),
-                    httpxAsyncClient=httpx.AsyncClient(proxy=self.proxy_url),
+                    client_args={"proxy": self.proxy_url},
+                    async_client_args={"proxy": self.proxy_url},
                 )
                 client_kwargs["http_options"] = http_options
-                logger.info("Для Gemini настроен proxy: %s", self.proxy_url)
+                logger.info("Для Gemini настроен proxy: %s", self._describe_proxy())
 
             self._client = genai.Client(**client_kwargs)
             logger.info("Gemini SDK клиент создан")
         return self._client
+
+    def _get_model_names(self) -> list[str]:
+        """Возвращает основной и резервный список моделей без дубликатов."""
+        model_names = [self.model_name]
+        if self.fallback_model_name and self.fallback_model_name != self.model_name:
+            model_names.append(self.fallback_model_name)
+        return model_names
+
+    def _calculate_retry_delay(self, attempt: int) -> float:
+        """Вычисляет экспоненциальную задержку повтора с jitter."""
+        base_delay = self.retry_backoff_seconds * (2 ** (attempt - 1))
+        jitter = random.uniform(0.0, self.retry_jitter_seconds) if self.retry_jitter_seconds else 0.0
+        return base_delay + jitter
+
+    def _describe_proxy(self) -> str:
+        """Возвращает безопасное текстовое описание proxy без учётных данных."""
+        if not self.proxy_url:
+            return "off"
+
+        parsed = urlparse(self.proxy_url)
+        if parsed.scheme and parsed.hostname and parsed.port:
+            return f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"
+        return "configured"
 
     def _get_types_module(self) -> Any:
         """Возвращает модуль типов из Gemini SDK."""

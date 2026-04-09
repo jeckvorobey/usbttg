@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     # Gemini API (получить на https://aistudio.google.com)
     gemini_api_key: str
     gemini_model: str = "gemini-2.5-flash"
+    gemini_fallback_model: str | None = "gemini-2.5-flash-lite"
+    gemini_max_retries: int = 3
+    gemini_retry_backoff_seconds: float = 1.0
+    gemini_retry_jitter_seconds: float = 0.3
 
     # Telethon сессия (имя файла без .session)
     session_name: str = "84523248603"
