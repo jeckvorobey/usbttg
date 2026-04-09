@@ -5,6 +5,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 
 logger = logging.getLogger(__name__)
 TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
@@ -185,11 +187,11 @@ class GeminiClient:
             client_kwargs: dict[str, Any] = {"api_key": self.api_key}
             if self.proxy_url:
                 http_options = genai.types.HttpOptions(
-                    client_args={"proxy": self.proxy_url},
-                    async_client_args={"proxy": self.proxy_url},
+                    httpxClient=httpx.Client(proxy=self.proxy_url),
+                    httpxAsyncClient=httpx.AsyncClient(proxy=self.proxy_url),
                 )
                 client_kwargs["http_options"] = http_options
-                logger.info("Для Gemini настроен proxy")
+                logger.info("Для Gemini настроен proxy: %s", self.proxy_url)
 
             self._client = genai.Client(**client_kwargs)
             logger.info("Gemini SDK клиент создан")
