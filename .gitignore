@@ -79,3 +79,4 @@ bin/
 *.rar
 danang_group/
 tg_user_info/*
+data/*
