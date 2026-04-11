@@ -572,3 +572,70 @@ async def test_silence_check_job_does_not_start_topic_during_dnd(monkeypatch):
     topic_selector.pick_random.assert_not_awaited()
     gemini_client.start_topic.assert_not_awaited()
     fake_telegram_client.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_silence_check_job_skips_activity_sync_during_dnd(monkeypatch, caplog):
+    """Проверяет, что во время DND job не запускает проверку активности группы."""
+    import run
+    import logging
+
+    settings = Settings(
+        api_id=1,
+        api_hash="hash",
+        gemini_api_key="gemini-key",
+        session_string="session-string",
+        db_path=":memory:",
+        whitelist_user_ids="123456789",
+        topics_path="data/topics.md",
+        prompts_dir="ai/prompts",
+        scheduler_enabled=True,
+        group_chat_id=-100555000111,
+        dnd_hours_utc="23-7",
+    )
+
+    history = SimpleNamespace(init_db=AsyncMock())
+    whitelist = SimpleNamespace()
+    topic_selector = SimpleNamespace(load=AsyncMock(), pick_random=AsyncMock(return_value="Тема"))
+    prompt_loader = SimpleNamespace(load=AsyncMock(side_effect=["system", "start_topic"]))
+    gemini_client = SimpleNamespace(start_topic=AsyncMock(return_value="Сообщение по теме"))
+    fake_telegram_client = FakeTelegramClient("session-string", 1, "hash")
+    fake_userbot_client = SimpleNamespace(
+        start=AsyncMock(),
+        stop=AsyncMock(),
+        client=fake_telegram_client,
+    )
+    captured_jobs: list[object] = []
+    conversation_session = SimpleNamespace(
+        is_active=lambda: False,
+        start=Mock(),
+    )
+    sync_group_activity = AsyncMock()
+
+    def add_job(func, *_args, **_kwargs):
+        captured_jobs.append(func)
+
+    monkeypatch.setattr(run, "load_settings_or_exit", lambda: settings)
+    monkeypatch.setattr(run, "MessageHistory", lambda db_path: history)
+    monkeypatch.setattr(run, "WhitelistFilter", lambda user_ids: whitelist)
+    monkeypatch.setattr(run, "PromptLoader", lambda prompts_dir: prompt_loader)
+    monkeypatch.setattr(run, "GeminiClient", lambda *args, **kwargs: gemini_client)
+    monkeypatch.setattr(run, "TopicSelector", lambda topics_path: topic_selector)
+    monkeypatch.setattr(run, "ConversationSession", lambda duration_minutes=30: conversation_session)
+    monkeypatch.setattr(run, "AsyncIOScheduler", lambda: SimpleNamespace(add_job=add_job, start=lambda: None))
+    monkeypatch.setattr(run, "UserBotClient", lambda **kwargs: fake_userbot_client)
+    monkeypatch.setattr(run, "_register_handlers", AsyncMock())
+    monkeypatch.setattr(run, "_sync_group_activity", sync_group_activity)
+    monkeypatch.setattr(run, "_utc_now", lambda: datetime(2026, 4, 10, 23, 30, tzinfo=UTC))
+
+    await run.main()
+
+    silence_job = captured_jobs[1]
+    with caplog.at_level(logging.INFO):
+        await silence_job()
+
+    sync_group_activity.assert_not_awaited()
+    topic_selector.pick_random.assert_not_awaited()
+    gemini_client.start_topic.assert_not_awaited()
+    fake_telegram_client.send_message.assert_not_awaited()
+    assert any("Проверка тишины пропущена: активен режим не беспокоить" in record.getMessage() for record in caplog.records)
