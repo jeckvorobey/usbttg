@@ -279,7 +279,7 @@ async def test_handle_new_message_starts_session_when_it_is_inactive():
 
 
 async def test_handle_new_message_does_not_start_session_from_message_when_scheduler_enabled():
-    """Проверяет, что при включённом планировщике входящее сообщение не стартует локальную сессию."""
+    """Проверяет, что при включённом планировщике без активной сессии сообщение пропускается."""
     whitelist = WhitelistFilter(user_ids={123})
 
     history = SimpleNamespace(
@@ -305,10 +305,10 @@ async def test_handle_new_message_does_not_start_session_from_message_when_sched
 
     silence_watcher.update_last_activity.assert_called_once_with()
     session.start.assert_not_called()
-    gemini_client.generate_reply.assert_awaited_once()
-    event.respond.assert_awaited_once_with("Ответ")
-    history.get_history.assert_awaited_once()
-    assert history.save_message.await_count == 2
+    gemini_client.generate_reply.assert_not_awaited()
+    event.respond.assert_not_awaited()
+    history.get_history.assert_not_awaited()
+    history.save_message.assert_not_awaited()
 
 
 async def test_handle_new_message_skips_when_dnd_is_active():

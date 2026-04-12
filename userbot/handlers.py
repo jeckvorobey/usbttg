@@ -142,6 +142,13 @@ async def handle_new_message(
                     sender_id,
                     chat_id,
                 )
+    if conversation_session is not None and not session_is_active:
+        logger.info(
+            "Сообщение от user_id=%s в chat_id=%s пропущено: сессия разговора не активна",
+            sender_id,
+            chat_id,
+        )
+        return
 
     history_items = await history.get_history(sender_id)
     logger.info(

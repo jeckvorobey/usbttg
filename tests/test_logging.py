@@ -279,6 +279,38 @@ async def test_handle_new_message_logs_external_session_start(caplog):
 
 
 @pytest.mark.asyncio
+async def test_handle_new_message_logs_skip_when_session_inactive_and_scheduler_enabled(caplog):
+    """Проверяет логирование пропуска сообщения без активной сессии при включённом планировщике."""
+    whitelist = WhitelistFilter(user_ids={123})
+
+    history = SimpleNamespace(
+        get_history=AsyncMock(return_value=[]),
+        save_message=AsyncMock(),
+    )
+    prompt_loader = SimpleNamespace(load=AsyncMock(side_effect=["Системный промт", "Промт ответа"]))
+    gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ"))
+    event = SimpleNamespace(sender_id=123, chat_id=-100555000111, raw_text="Привет", respond=AsyncMock())
+    session = SimpleNamespace(is_active=lambda: False, remaining_minutes=lambda: None, start=lambda _topic: None)
+
+    with caplog.at_level(logging.INFO):
+        await handle_new_message(
+            event=event,
+            whitelist=whitelist,
+            history=history,
+            prompt_loader=prompt_loader,
+            gemini_client=gemini_client,
+            group_chat_id=-100555000111,
+            conversation_session=session,
+            scheduler_enabled=True,
+        )
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("сессия разговора не активна" in message for message in messages)
+    event.respond.assert_not_awaited()
+    gemini_client.generate_reply.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_message_history_logs_save_and_fetch(caplog):
     """Проверяет логирование операций чтения и записи истории."""
     history = MessageHistory(":memory:")
