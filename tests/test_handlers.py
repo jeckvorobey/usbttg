@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from ai.gemini import GeminiTemporaryError
-from userbot.handlers import WhitelistFilter, handle_new_message
+from userbot.handlers import WhitelistFilter, _send_response, handle_new_message
 
 
 @pytest.fixture(autouse=True)
@@ -267,10 +267,44 @@ async def test_handle_new_message_starts_session_when_it_is_inactive():
         gemini_client=gemini_client,
         silence_watcher=silence_watcher,
         conversation_session=session,
+        scheduler_enabled=False,
     )
 
     silence_watcher.update_last_activity.assert_called_once_with()
     session.start.assert_called_once_with("Привет")
+    gemini_client.generate_reply.assert_awaited_once()
+    event.respond.assert_awaited_once_with("Ответ")
+    history.get_history.assert_awaited_once()
+    assert history.save_message.await_count == 2
+
+
+async def test_handle_new_message_does_not_start_session_from_message_when_scheduler_enabled():
+    """Проверяет, что при включённом планировщике входящее сообщение не стартует локальную сессию."""
+    whitelist = WhitelistFilter(user_ids={123})
+
+    history = SimpleNamespace(
+        get_history=AsyncMock(return_value=[]),
+        save_message=AsyncMock(),
+    )
+    prompt_loader = SimpleNamespace(load=AsyncMock(side_effect=["Системный промт", "Промт ответа"]))
+    gemini_client = SimpleNamespace(generate_reply=AsyncMock(return_value="Ответ"))
+    silence_watcher = SimpleNamespace(update_last_activity=Mock())
+    event = SimpleNamespace(sender_id=123, raw_text="Привет", respond=AsyncMock())
+    session = SimpleNamespace(is_active=lambda: False, remaining_minutes=lambda: None, start=Mock())
+
+    await handle_new_message(
+        event=event,
+        whitelist=whitelist,
+        history=history,
+        prompt_loader=prompt_loader,
+        gemini_client=gemini_client,
+        silence_watcher=silence_watcher,
+        conversation_session=session,
+        scheduler_enabled=True,
+    )
+
+    silence_watcher.update_last_activity.assert_called_once_with()
+    session.start.assert_not_called()
     gemini_client.generate_reply.assert_awaited_once()
     event.respond.assert_awaited_once_with("Ответ")
     history.get_history.assert_awaited_once()
@@ -370,3 +404,29 @@ async def test_handle_new_message_accepts_chat_id_from_event():
 
     gemini_client.generate_reply.assert_awaited_once()
     event.respond.assert_awaited_once_with("Ответ бота")
+
+
+async def test_send_response_uses_delay_between_30_and_60_seconds(monkeypatch):
+    """Проверяет, что искусственная задержка ответа выбирается в диапазоне 30-60 секунд."""
+    captured: dict[str, float] = {}
+
+    async def fake_sleep(delay: float) -> None:
+        captured["delay"] = delay
+
+    monkeypatch.setattr("userbot.handlers.asyncio.sleep", fake_sleep)
+
+    def fake_uniform(start: float, end: float) -> float:
+        captured["uniform_start"] = start
+        captured["uniform_end"] = end
+        return 45.0
+
+    monkeypatch.setattr("userbot.handlers.random.uniform", fake_uniform)
+
+    event = SimpleNamespace(is_reply=False, respond=AsyncMock())
+
+    await _send_response(event, "Ответ")
+
+    assert captured["uniform_start"] == 30
+    assert captured["uniform_end"] == 60
+    assert captured["delay"] == 45.0
+    event.respond.assert_awaited_once_with("Ответ")

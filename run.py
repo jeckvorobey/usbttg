@@ -257,6 +257,7 @@ async def main() -> None:
         telegram_client.group_chat_id = settings.group_chat_id
         telegram_client.group_target = settings.group_target
         telegram_client.dnd_hours_utc = settings.dnd_hours_utc
+        telegram_client.scheduler_enabled = settings.scheduler_enabled
         await _log_resolved_group(
             telegram_client,
             settings.group_chat_id,

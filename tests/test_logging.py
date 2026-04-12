@@ -152,6 +152,7 @@ async def test_handle_new_message_logs_successful_processing(caplog):
             gemini_client=gemini_client,
             group_chat_id=-100555000111,
             conversation_session=session,
+            scheduler_enabled=False,
         )
 
     messages = [record.getMessage() for record in caplog.records]
@@ -269,6 +270,7 @@ async def test_handle_new_message_logs_external_session_start(caplog):
             gemini_client=gemini_client,
             group_chat_id=-100555000111,
             conversation_session=session,
+            scheduler_enabled=False,
         )
 
     messages = [record.getMessage() for record in caplog.records]

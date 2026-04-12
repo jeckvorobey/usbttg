@@ -404,6 +404,7 @@ async def test_main_binds_group_chat_id_to_telegram_client(monkeypatch):
     assert fake_telegram_client.group_chat_id == -100555000111
     assert fake_telegram_client.group_target is None
     assert fake_telegram_client.dnd_hours_utc is None
+    assert fake_telegram_client.scheduler_enabled is True
 
 
 @pytest.mark.asyncio

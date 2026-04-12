@@ -53,6 +53,7 @@ async def handle_new_message(
     conversation_session: object | None = None,
     group_chat_id: int | None = None,
     dnd_hours_utc: str | None = None,
+    scheduler_enabled: bool | None = None,
     now_utc_factory: Any | None = None,
 ) -> None:
     """
@@ -77,6 +78,9 @@ async def handle_new_message(
     effective_dnd_hours_utc = dnd_hours_utc
     if effective_dnd_hours_utc is None:
         effective_dnd_hours_utc = getattr(telethon_client, "dnd_hours_utc", None)
+    effective_scheduler_enabled = scheduler_enabled
+    if effective_scheduler_enabled is None:
+        effective_scheduler_enabled = getattr(telethon_client, "scheduler_enabled", None)
     utc_now = now_utc_factory() if callable(now_utc_factory) else datetime.now(UTC)
     if effective_group_chat_id is not None and chat_id != effective_group_chat_id:
         logger.info(
@@ -128,7 +132,7 @@ async def handle_new_message(
     session_is_active = False
     if conversation_session is not None:
         session_is_active = conversation_session.is_active()
-        if not session_is_active:
+        if not session_is_active and effective_scheduler_enabled is False:
             start_session = getattr(conversation_session, "start", None)
             if callable(start_session):
                 start_session(user_message)
@@ -231,7 +235,7 @@ async def _send_response(event: object, text: str) -> None:
     Если входящее сообщение само является reply — отвечает с цитатой (reply),
     иначе отправляет обычное сообщение в чат (respond).
     """
-    delay = random.uniform(10, 30)
+    delay = random.uniform(30, 60)
     logger.info("Задержка перед отправкой ответа: %.1f сек", delay)
     await asyncio.sleep(delay)
 
