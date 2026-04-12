@@ -84,7 +84,17 @@ class Settings(BaseSettings):
     silence_timeout_minutes: int = 60
     session_duration_minutes: int = 30
     group_chat_id: OptionalInt = None
+    group_target: str | None = None
     dnd_hours_utc: str | None = None
+
+    @field_validator("group_target", mode="before")
+    @classmethod
+    def validate_group_target(cls, value: object) -> object:
+        """Нормализует строковый target группы для исходящих сообщений."""
+        value = _empty_str_to_none(value)
+        if value is None or not isinstance(value, str):
+            return value
+        return value.strip()
 
     @field_validator("dnd_hours_utc", mode="before")
     @classmethod
