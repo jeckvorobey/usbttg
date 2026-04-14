@@ -109,6 +109,24 @@ async def test_start_topic_prompt_avoids_editorial_post_format():
     assert "Без списков" in start_topic_prompt
     assert "Без «топ-5»" in start_topic_prompt
     assert "только про Нячанг" in start_topic_prompt
+    assert "короткий вопрос" in start_topic_prompt
+
+
+@pytest.mark.asyncio
+async def test_prompts_describe_questions_more_precisely():
+    """Проверяет, что промты разрешают уместный вопрос, но запрещают формальный подвешенный вопрос."""
+    loader = PromptLoader(prompts_dir="ai/prompts")
+
+    system_prompt = await loader.load("system")
+    reply_prompt = await loader.load("reply")
+    start_topic_prompt = await loader.load("start_topic")
+    wind_down_hint = await loader.load("wind_down_hint")
+
+    assert "действительно уместен по смыслу" in system_prompt
+    assert "можно закончить одним коротким вопросом" in reply_prompt
+    assert "формально только ради продолжения разговора" in reply_prompt
+    assert "короткий вопрос" in start_topic_prompt
+    assert "Не заканчивай вопросом" in wind_down_hint
 
 
 def test_topics_file_contains_only_nha_trang_focused_topics():

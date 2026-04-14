@@ -18,7 +18,7 @@ from userbot.scheduler import ConversationSession, SilenceWatcher, TopicSelector
 
 
 logger = logging.getLogger(__name__)
-SILENCE_CHECK_INTERVAL_MINUTES = 5
+SILENCE_CHECK_INTERVAL_MINUTES = 2
 
 
 def _utc_now() -> datetime:
