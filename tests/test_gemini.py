@@ -129,6 +129,20 @@ async def test_prompts_describe_questions_more_precisely():
     assert "Не заканчивай вопросом" in wind_down_hint
 
 
+@pytest.mark.asyncio
+async def test_system_and_reply_prompts_require_non_intrusive_service_mentions():
+    """Проверяет, что промты запрещают навязчивые и неуместные упоминания сервисов."""
+    loader = PromptLoader(prompts_dir="ai/prompts")
+
+    system_prompt = await loader.load("system")
+    reply_prompt = await loader.load("reply")
+
+    assert "Не упоминай @AntEx_support" in system_prompt
+    assert "не спрашивал про перевод на карту" in system_prompt
+    assert "Не делай разговор навязчивым" in reply_prompt
+    assert "не возвращай разговор к одному и тому же офферу" in reply_prompt
+
+
 def test_topics_file_contains_only_nha_trang_focused_topics():
     """Проверяет, что production-темы не уводят разговор в другие города."""
     topics = Path("data/topics.md").read_text(encoding="utf-8")
