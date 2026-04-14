@@ -433,3 +433,59 @@ async def test_gemini_client_adds_jitter_to_retry_delay(monkeypatch):
         )
 
     assert delays == [0.75]
+
+
+@pytest.mark.asyncio
+async def test_gemini_client_retries_on_request_timeout(monkeypatch):
+    """Проверяет, что таймаут запроса считается временной ошибкой и ретраится."""
+
+    class FakeModels:
+        def generate_content(self, **kwargs):
+            return SimpleNamespace(text="Ответ после таймаута")
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            self.models = FakeModels()
+
+    class FakeGenerateContentConfig:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+    fake_types = SimpleNamespace(GenerateContentConfig=FakeGenerateContentConfig)
+    fake_genai = SimpleNamespace(Client=FakeClient, types=fake_types)
+
+    delays: list[float] = []
+    wait_for_calls = {"count": 0}
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    async def fake_wait_for(awaitable, timeout: float):
+        wait_for_calls["count"] += 1
+        if wait_for_calls["count"] == 1:
+            awaitable.close()
+            raise TimeoutError
+        return await awaitable
+
+    monkeypatch.setattr("ai.gemini._import_google_genai", lambda: fake_genai)
+    monkeypatch.setattr("ai.gemini.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("ai.gemini.asyncio.wait_for", fake_wait_for)
+
+    client = GeminiClient(
+        api_key="test_key_123",
+        model_name="gemini-2.5-flash",
+        max_retries=2,
+        retry_backoff_seconds=0.5,
+        retry_jitter_seconds=0.0,
+        request_timeout_seconds=15.0,
+    )
+
+    result = await client.generate_reply(
+        system_prompt="Системная роль",
+        history=[],
+        user_message="Привет",
+    )
+
+    assert result == "Ответ после таймаута"
+    assert delays == [0.5]
+    assert wait_for_calls["count"] == 2

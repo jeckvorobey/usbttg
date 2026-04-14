@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     gemini_max_retries: int = 3
     gemini_retry_backoff_seconds: float = 1.0
     gemini_retry_jitter_seconds: float = 0.3
+    gemini_request_timeout_seconds: float = 45.0
 
     # Telethon строковая сессия
     session_string: RequiredStr
