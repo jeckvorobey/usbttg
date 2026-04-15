@@ -78,7 +78,6 @@ def test_settings_loads_non_secret_values_from_toml(tmp_path):
         classifier_model = "gemini-classifier"
         classifier_temperature = 0.1
         max_input_chars = 400
-        queue_db_path = "custom/reply_guard.db"
         worker_poll_interval_seconds = 0.2
         max_attempts = 2
         retry_backoff_seconds = [1, 3]
@@ -114,7 +113,6 @@ def test_settings_loads_non_secret_values_from_toml(tmp_path):
     assert settings.reply_guard_refusal_text == "Отказ"
     assert settings.reply_guard_classifier_model == "gemini-classifier"
     assert settings.reply_guard_max_input_chars == 400
-    assert settings.reply_guard_queue_db_path == "custom/reply_guard.db"
     assert settings.reply_guard_system_prompt_path == "custom/reply_guard/system.md"
 
 

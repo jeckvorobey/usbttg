@@ -108,8 +108,7 @@ classifier_temperature = 0.1
 # Максимальная длина пользовательского вопроса после sanitize.
 max_input_chars = 500
 
-# Отдельная SQLite-очередь reply_guard, не связанная с историей диалогов.
-queue_db_path = "data/reply_guard_queue.db"
+# Очередь reply_guard хранится отдельной таблицей в основной SQLite-БД из [paths].db_path.
 
 # Период polling-а одного последовательного воркера.
 worker_poll_interval_seconds = 0.5

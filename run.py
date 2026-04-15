@@ -300,7 +300,7 @@ async def main() -> None:
                     if event_chats_filter is None:
                         logger.warning("reply_guard: handler не зарегистрирован — целевая группа не задана")
                     else:
-                        reply_guard_queue = ReplyGuardQueue(settings.reply_guard_queue_db_path)
+                        reply_guard_queue = ReplyGuardQueue(settings.db_path)
                         await reply_guard_queue.init_db()
                         classifier_gemini = GeminiClient(
                             settings.gemini_api_key,

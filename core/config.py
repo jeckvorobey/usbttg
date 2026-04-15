@@ -205,7 +205,6 @@ class ReplyGuardConfig(_StrictModel):
     classifier_model: str = "gemini-3-flash-preview"
     classifier_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
     max_input_chars: int = Field(default=500, ge=1)
-    queue_db_path: str = "data/reply_guard_queue.db"
     worker_poll_interval_seconds: float = Field(default=0.5, gt=0.0)
     max_attempts: int = Field(default=3, ge=1)
     retry_backoff_seconds: list[float] = Field(default_factory=lambda: [2.0, 8.0, 30.0])
@@ -337,7 +336,6 @@ class Settings:
         self.reply_guard_classifier_model = config.reply_guard.classifier_model
         self.reply_guard_classifier_temperature = config.reply_guard.classifier_temperature
         self.reply_guard_max_input_chars = config.reply_guard.max_input_chars
-        self.reply_guard_queue_db_path = config.reply_guard.queue_db_path
         self.reply_guard_worker_poll_interval_seconds = config.reply_guard.worker_poll_interval_seconds
         self.reply_guard_max_attempts = config.reply_guard.max_attempts
         self.reply_guard_retry_backoff_seconds = config.reply_guard.retry_backoff_seconds
