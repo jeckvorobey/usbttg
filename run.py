@@ -15,10 +15,10 @@ from core.logging import setup_logging
 from userbot.client import UserBotClient
 from userbot.handlers import WhitelistFilter, handle_new_message
 from userbot.scheduler import ConversationSession, SilenceWatcher, TopicSelector, is_dnd_active_utc
+from userbot.windowed_qa import ExchangeTracker, WindowSchedule, build_responder_handler, initiator_job
 
 
 logger = logging.getLogger(__name__)
-SILENCE_CHECK_INTERVAL_MINUTES = 10
 
 
 def _utc_now() -> datetime:
@@ -232,6 +232,7 @@ async def main() -> None:
         retry_backoff_seconds=settings.gemini_retry_backoff_seconds,
         retry_jitter_seconds=settings.gemini_retry_jitter_seconds,
         request_timeout_seconds=settings.gemini_request_timeout_seconds,
+        temperature=settings.gemini_temperature,
     )
 
     topic_selector = TopicSelector(settings.topics_path)
@@ -271,7 +272,7 @@ async def main() -> None:
 
     scheduler = AsyncIOScheduler()
 
-    if settings.scheduler_enabled:
+    if settings.mode == "legacy_session" and settings.scheduler_enabled:
         async def _session_expiry_job() -> None:
             """Проверяет истечение активной сессии разговора — запускается каждую минуту."""
             conversation_session.is_active()
@@ -351,24 +352,76 @@ async def main() -> None:
         scheduler.add_job(
             _silence_check_job,
             "interval",
-            minutes=SILENCE_CHECK_INTERVAL_MINUTES,
+            minutes=settings.silence_check_interval_minutes,
             max_instances=1,
             coalesce=True,
         )
         logger.info(
             "Планировщик активен: проверка тишины каждые %s мин, порог тишины %s мин, сессия до %s мин",
-            SILENCE_CHECK_INTERVAL_MINUTES,
+            settings.silence_check_interval_minutes,
             settings.silence_timeout_minutes,
             settings.session_duration_minutes,
         )
-    else:
+    elif settings.mode == "legacy_session":
         logger.info("Режим расписания отключён (SCHEDULER_ENABLED=false)")
+    elif settings.mode == "windowed_qa":
+        window_schedule = WindowSchedule(
+            morning_window_utc=settings.window_morning_utc,
+            evening_window_utc=settings.window_evening_utc,
+            initiator_offset_minutes=settings.initiator_offset_minutes,
+        )
+        exchange_tracker = ExchangeTracker(settings.max_exchanges_per_window)
+        if settings.bot_role == "initiator":
+            scheduler.add_job(
+                initiator_job,
+                "interval",
+                minutes=1,
+                max_instances=1,
+                coalesce=True,
+                kwargs={
+                    "settings": settings,
+                    "client": telegram_client,
+                    "gemini": gemini_client,
+                    "topics": topic_selector,
+                    "history": history,
+                    "prompt_loader": prompt_loader,
+                    "schedule": window_schedule,
+                    "tracker": exchange_tracker,
+                },
+            )
+            logger.info("windowed_qa: зарегистрирована задача initiator")
+        elif settings.bot_role == "responder":
+            if telegram_client is None:
+                logger.warning("windowed_qa: responder handler не зарегистрирован — Telegram-клиент отсутствует")
+            else:
+                try:
+                    from telethon import events
+                except ImportError:
+                    logger.warning("windowed_qa: responder handler не зарегистрирован — telethon не установлен")
+                else:
+                    handler = build_responder_handler(
+                        settings=settings,
+                        client=telegram_client,
+                        gemini=gemini_client,
+                        history=history,
+                        prompt_loader=prompt_loader,
+                        whitelist=whitelist,
+                        schedule=window_schedule,
+                        tracker=exchange_tracker,
+                    )
+                    telegram_client.add_event_handler(handler, events.NewMessage())
+                    logger.info("windowed_qa: зарегистрирован responder handler")
+        else:
+            raise ValueError(f"Неизвестная роль windowed_qa: {settings.bot_role}")
+    else:
+        raise ValueError(f"Неизвестный режим работы: {settings.mode}")
 
     scheduler.start()
     logger.info("Планировщик запущен")
 
     try:
-        await _register_handlers(userbot_client, whitelist)
+        if settings.mode == "legacy_session":
+            await _register_handlers(userbot_client, whitelist)
         if telegram_client is not None:
             logger.info("Переход в режим ожидания сообщений Telegram")
             try:
