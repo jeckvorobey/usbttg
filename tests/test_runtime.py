@@ -279,9 +279,13 @@ async def test_ensure_group_membership_joins_public_target(monkeypatch):
     import run
 
     telegram_client = FakeTelegramClient("anna", 1, "hash")
-    telegram_client.get_entity = AsyncMock(side_effect=[ValueError("not joined"), "@joined"])
+    telegram_client.get_entity = AsyncMock(return_value="@joined")
 
-    join_group = AsyncMock(side_effect=lambda target: telegram_client.joined_targets.append(target))
+    async def join_public_group(target: str):
+        telegram_client.joined_targets.append(target)
+        return "@joined"
+
+    join_group = AsyncMock(side_effect=join_public_group)
     wrapper = SimpleNamespace(client=telegram_client, join_group=join_group, join_invite_link=AsyncMock())
 
     resolved = await run._ensure_group_membership(wrapper, None, "@my_group", "anna")
@@ -291,14 +295,49 @@ async def test_ensure_group_membership_joins_public_target(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_ensure_group_membership_joins_public_link_even_if_entity_resolves_without_membership():
+    """Проверяет, что публичный entity-резолв не маскирует отсутствие членства."""
+    import run
+
+    class DialogClient(FakeTelegramClient):
+        async def iter_dialogs(self):
+            if False:
+                yield None
+
+    telegram_client = DialogClient("anna", 1, "hash")
+    telegram_client.get_entity = AsyncMock(side_effect=["@public_group", "@joined_after_join"])
+
+    async def join_public_group(target: str):
+        telegram_client.joined_targets.append(target)
+        return "@joined_after_join"
+
+    join_group = AsyncMock(side_effect=join_public_group)
+    wrapper = SimpleNamespace(client=telegram_client, join_group=join_group, join_invite_link=AsyncMock())
+
+    resolved = await run._ensure_group_membership(
+        wrapper,
+        None,
+        "https://t.me/public_group",
+        "anna",
+    )
+
+    assert resolved == "@joined_after_join"
+    join_group.assert_awaited_once_with("@public_group")
+
+
+@pytest.mark.asyncio
 async def test_ensure_group_membership_imports_invite_link(monkeypatch):
     """Проверяет автovступление в приватную группу через invite link."""
     import run
 
     telegram_client = FakeTelegramClient("anna", 1, "hash")
-    telegram_client.get_entity = AsyncMock(side_effect=[ValueError("not joined"), "@joined"])
+    telegram_client.get_entity = AsyncMock(return_value="@joined")
 
-    join_invite_link = AsyncMock(side_effect=lambda link: telegram_client.imported_invites.append(link))
+    async def import_invite(link: str):
+        telegram_client.imported_invites.append(link)
+        return "@joined"
+
+    join_invite_link = AsyncMock(side_effect=import_invite)
     wrapper = SimpleNamespace(client=telegram_client, join_group=AsyncMock(), join_invite_link=join_invite_link)
 
     resolved = await run._ensure_group_membership(wrapper, None, "https://t.me/+InviteHash", "anna")
@@ -359,6 +398,32 @@ async def test_ensure_group_membership_returns_dialog_entity_without_join():
     wrapper = SimpleNamespace(client=telegram_client, join_group=AsyncMock(), join_invite_link=AsyncMock())
 
     resolved = await run._ensure_group_membership(wrapper, 123, None, "anna")
+
+    assert resolved is entity
+    wrapper.join_group.assert_not_called()
+    wrapper.join_invite_link.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ensure_group_membership_skips_join_when_public_dialog_is_already_present():
+    """Проверяет, что для уже доступной публичной группы дополнительный join не нужен."""
+    import run
+
+    entity = SimpleNamespace(id=555, username="public_group")
+
+    class DialogClient(FakeTelegramClient):
+        async def iter_dialogs(self):
+            yield SimpleNamespace(id=555, entity=entity)
+
+    telegram_client = DialogClient("anna", 1, "hash")
+    wrapper = SimpleNamespace(client=telegram_client, join_group=AsyncMock(), join_invite_link=AsyncMock())
+
+    resolved = await run._ensure_group_membership(
+        wrapper,
+        None,
+        "https://t.me/public_group",
+        "anna",
+    )
 
     assert resolved is entity
     wrapper.join_group.assert_not_called()

@@ -91,6 +91,69 @@ def _normalize_public_group_target(target: str) -> str:
     return normalized
 
 
+def _extract_public_target_slug(target: str | None) -> str | None:
+    """Извлекает username/slug публичной группы из target."""
+    if not isinstance(target, str):
+        return None
+
+    normalized = _normalize_public_group_target(target)
+    if normalized.startswith("@"):
+        slug = normalized.removeprefix("@").strip()
+        return slug.casefold() or None
+    return None
+
+
+def _dialog_matches_group(dialog: object, group_chat_id: int | None, group_target: str | None) -> bool:
+    """Проверяет, относится ли dialog к целевой группе по id или публичному username."""
+    dialog_id = getattr(dialog, "id", None)
+    entity = getattr(dialog, "entity", None)
+    entity_id = getattr(entity, "id", None)
+    if group_chat_id is not None and (
+        _chat_id_matches(group_chat_id, dialog_id) or _chat_id_matches(group_chat_id, entity_id)
+    ):
+        return True
+
+    expected_slug = _extract_public_target_slug(group_target)
+    if not expected_slug:
+        return False
+
+    for candidate in (getattr(dialog, "username", None), getattr(entity, "username", None)):
+        if isinstance(candidate, str) and candidate.strip().casefold() == expected_slug:
+            return True
+    return False
+
+
+async def _resolve_joined_group_dialog(
+    telegram_client: object | None,
+    group_chat_id: int | None,
+    group_target: str | None = None,
+) -> object | None:
+    """Возвращает dialog/entity только если клиент уже состоит в целевой группе."""
+    if telegram_client is None:
+        return None
+
+    iter_dialogs = getattr(telegram_client, "iter_dialogs", None)
+    if iter_dialogs is None:
+        return None
+
+    async for dialog in iter_dialogs():
+        if _dialog_matches_group(dialog, group_chat_id, group_target):
+            entity = getattr(dialog, "entity", None)
+            return entity or dialog
+    return None
+
+
+def _extract_join_result_target(join_result: object | None) -> object | None:
+    """Извлекает entity группы из результата join-запроса Telethon."""
+    if join_result is None:
+        return None
+
+    chats = getattr(join_result, "chats", None)
+    if isinstance(chats, list) and chats:
+        return chats[0]
+    return join_result
+
+
 async def _resolve_group_target(
     telegram_client: object | None,
     group_chat_id: int | None,
@@ -106,21 +169,16 @@ async def _resolve_group_target(
     if cached_chat_id == group_chat_id and cached_group_target == group_target and cached_target is not None:
         return cached_target
 
-    iter_dialogs = getattr(telegram_client, "iter_dialogs", None)
-    if iter_dialogs is not None and group_chat_id is not None:
-        async for dialog in iter_dialogs():
-            dialog_id = getattr(dialog, "id", None)
-            entity = getattr(dialog, "entity", None)
-            entity_id = getattr(entity, "id", None)
-            if _chat_id_matches(group_chat_id, dialog_id) or _chat_id_matches(group_chat_id, entity_id):
-                setattr(telegram_client, "_resolved_group_chat_id", group_chat_id)
-                setattr(telegram_client, "_resolved_group_target", group_target)
-                setattr(telegram_client, "_resolved_group_chat_target", entity or dialog)
-                return getattr(telegram_client, "_resolved_group_chat_target")
+    joined_group_target = await _resolve_joined_group_dialog(telegram_client, group_chat_id, group_target)
+    if joined_group_target is not None:
+        setattr(telegram_client, "_resolved_group_chat_id", group_chat_id)
+        setattr(telegram_client, "_resolved_group_target", group_target)
+        setattr(telegram_client, "_resolved_group_chat_target", joined_group_target)
+        return joined_group_target
 
     normalized_group_target = group_target.strip() if isinstance(group_target, str) else None
     if normalized_group_target:
-        if group_chat_id is not None and _is_invite_link(normalized_group_target):
+        if _is_invite_link(normalized_group_target):
             logger.info("Пропуск get_entity для invite link target=%s", normalized_group_target)
             return None
         get_entity = getattr(telegram_client, "get_entity", None)
@@ -149,7 +207,7 @@ async def _ensure_group_membership(
 ) -> object | None:
     """Гарантирует доступ клиента к целевой группе, при необходимости выполняя вступление."""
     telegram_client = client_wrapper.client
-    resolved_target = await _resolve_group_target(telegram_client, group_chat_id, group_target)
+    resolved_target = await _resolve_joined_group_dialog(telegram_client, group_chat_id, group_target)
     if resolved_target is not None:
         logger.info("swarm: bot_id=%s уже имеет доступ к целевой группе", bot_id)
         return resolved_target
@@ -167,13 +225,17 @@ async def _ensure_group_membership(
 
     if _is_invite_link(normalized_target):
         logger.info("swarm: bot_id=%s пытается вступить в группу по invite link", bot_id)
-        await client_wrapper.join_invite_link(normalized_target)
+        join_result = await client_wrapper.join_invite_link(normalized_target)
     else:
         public_target = _normalize_public_group_target(normalized_target)
         logger.info("swarm: bot_id=%s пытается вступить в публичную группу: %s", bot_id, public_target)
-        await client_wrapper.join_group(public_target)
+        join_result = await client_wrapper.join_group(public_target)
 
-    resolved_target = await _resolve_group_target(telegram_client, group_chat_id, group_target)
+    resolved_target = await _resolve_joined_group_dialog(telegram_client, group_chat_id, group_target)
+    if resolved_target is None:
+        resolved_target = _extract_join_result_target(join_result)
+    if resolved_target is None:
+        resolved_target = await _resolve_group_target(telegram_client, group_chat_id, group_target)
     if resolved_target is not None:
         logger.info("swarm: bot_id=%s успешно получил доступ к целевой группе после автovступления", bot_id)
         return resolved_target
