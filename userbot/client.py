@@ -105,14 +105,14 @@ class UserBotClient:
         logger.info("Запрос данных текущего Telegram-пользователя")
         return await client.get_me()
 
-    async def join_group(self, target: str) -> None:
+    async def join_group(self, target: str) -> Any:
         """Вступает в публичную группу или канал по username/ссылке."""
         client = self._require_client()
         requests = _import_telethon_channel_requests()
         logger.info("Вступление в публичную Telegram-группу: target=%s", target)
-        await client(requests.JoinChannelRequest(target))
+        return await client(requests.JoinChannelRequest(target))
 
-    async def join_invite_link(self, invite_link: str) -> None:
+    async def join_invite_link(self, invite_link: str) -> Any:
         """Вступает в приватную группу по invite link."""
         client = self._require_client()
         invite_hash = _extract_invite_hash(invite_link)
@@ -121,7 +121,7 @@ class UserBotClient:
 
         requests = _import_telethon_invite_requests()
         logger.info("Вступление в приватную Telegram-группу по invite link")
-        await client(requests.ImportChatInviteRequest(invite_hash))
+        return await client(requests.ImportChatInviteRequest(invite_hash))
 
     def _require_client(self) -> Any:
         """Возвращает активный Telethon-клиент или поднимает ошибку."""
