@@ -127,6 +127,7 @@ async def test_register_swarm_handlers_registers_handler_per_bot(monkeypatch):
     fake_client_anna = FakeTelegramClient("anna", 1, "hash")
     fake_client_mike = FakeTelegramClient("mike", 1, "hash")
     manager = SimpleNamespace(
+        active_bot_ids=["anna", "mike"],
         bot_profiles=[
             SimpleNamespace(id="anna", enabled=True, telegram_user_id=101, persona_file="anna.md"),
             SimpleNamespace(id="mike", enabled=True, telegram_user_id=202, persona_file="mike.md"),
@@ -142,6 +143,30 @@ async def test_register_swarm_handlers_registers_handler_per_bot(monkeypatch):
 
     assert fake_client_anna.add_event_handler.call_count == 1
     assert fake_client_mike.add_event_handler.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_register_swarm_handlers_skips_profiles_outside_active_pool(monkeypatch):
+    """Проверяет, что handler не регистрируется для бота, исключённого при startup."""
+    import run
+
+    fake_client_anna = FakeTelegramClient("anna", 1, "hash")
+    manager = SimpleNamespace(
+        active_bot_ids=["anna"],
+        bot_profiles=[
+            SimpleNamespace(id="anna", enabled=True, telegram_user_id=101, persona_file="anna.md"),
+            SimpleNamespace(id="vitaly", enabled=True, telegram_user_id=None, persona_file="vitaly.md"),
+        ],
+        get_client=lambda bot_id: SimpleNamespace(client=fake_client_anna) if bot_id == "anna" else (_ for _ in ()).throw(KeyError(bot_id)),
+        swarm_user_ids={101},
+        human_slot=lambda _bot_id: _AsyncNullContext(),
+    )
+    runtime = SimpleNamespace(history=object(), prompt_composer=object(), gemini_client=object())
+    monkeypatch.setitem(__import__("sys").modules, "telethon", SimpleNamespace(events=SimpleNamespace(NewMessage=lambda: "new-message")))
+
+    await run._register_swarm_handlers(manager, runtime)
+
+    assert fake_client_anna.add_event_handler.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -280,6 +305,43 @@ async def test_ensure_group_membership_imports_invite_link(monkeypatch):
 
     assert resolved == "@joined"
     join_invite_link.assert_awaited_once_with("https://t.me/+InviteHash")
+
+
+@pytest.mark.asyncio
+async def test_resolve_group_target_skips_get_entity_for_invite_link():
+    """Проверяет, что invite link не используется для прямого get_entity-резолва."""
+    import run
+
+    class DialogClient(FakeTelegramClient):
+        async def iter_dialogs(self):
+            if False:
+                yield None
+
+    telegram_client = DialogClient("anna", 1, "hash")
+
+    resolved = await run._resolve_group_target(telegram_client, 123, "https://t.me/+InviteHash")
+
+    assert resolved is None
+    telegram_client.get_entity.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ensure_group_membership_raises_clear_error_when_group_id_is_unavailable():
+    """Проверяет понятную ошибку, если бот не видит группу по корректному chat_id."""
+    import run
+
+    class DialogClient(FakeTelegramClient):
+        async def iter_dialogs(self):
+            if False:
+                yield None
+
+    telegram_client = DialogClient("anna", 1, "hash")
+    wrapper = SimpleNamespace(client=telegram_client, join_group=AsyncMock(), join_invite_link=AsyncMock())
+
+    with pytest.raises(ValueError, match="не имеет доступа к группе с GROUP_CHAT_ID=123"):
+        await run._ensure_group_membership(wrapper, 123, "https://t.me/+InviteHash", "anna")
+
+    wrapper.join_invite_link.assert_not_awaited()
 
 
 @pytest.mark.asyncio

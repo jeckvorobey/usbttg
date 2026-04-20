@@ -120,6 +120,9 @@ async def _resolve_group_target(
 
     normalized_group_target = group_target.strip() if isinstance(group_target, str) else None
     if normalized_group_target:
+        if group_chat_id is not None and _is_invite_link(normalized_group_target):
+            logger.info("Пропуск get_entity для invite link target=%s", normalized_group_target)
+            return None
         get_entity = getattr(telegram_client, "get_entity", None)
         if get_entity is None:
             logger.warning("Не удалось резолвить target группы '%s': get_entity недоступен", normalized_group_target)
@@ -155,6 +158,12 @@ async def _ensure_group_membership(
     if not normalized_target:
         logger.warning("swarm: bot_id=%s пропускает автovступление: group_target не задан", bot_id)
         return None
+
+    if group_chat_id is not None and _is_invite_link(normalized_target):
+        raise ValueError(
+            f"bot_id={bot_id} не имеет доступа к группе с GROUP_CHAT_ID={group_chat_id}; "
+            "обновите bot membership вручную или задайте актуальный публичный GROUP_TARGET"
+        )
 
     if _is_invite_link(normalized_target):
         logger.info("swarm: bot_id=%s пытается вступить в группу по invite link", bot_id)
@@ -261,8 +270,11 @@ async def _register_swarm_handlers(manager: SwarmManager, runtime: RuntimeContex
         logger.warning("Регистрация swarm handler-ов пропущена: telethon не установлен")
         return
 
-    for profile in manager.bot_profiles:
-        if not profile.enabled:
+    active_profiles = {profile.id: profile for profile in manager.bot_profiles if profile.enabled}
+    for bot_id in manager.active_bot_ids:
+        profile = active_profiles.get(bot_id)
+        if profile is None:
+            logger.warning("Пропуск регистрации handler-а: активный bot_id=%s отсутствует в профилях", bot_id)
             continue
         client_wrapper = manager.get_client(profile.id)
         telegram_client = client_wrapper.client
